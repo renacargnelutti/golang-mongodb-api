@@ -53,7 +53,33 @@ func init() {
 
 // GetAllTask get all the task route
 func GetAllTask(w http.ResponseWriter, r *http.Request) {
-	tasks := getAllTask()
+	cur, err := collection.Find(context.Background(), bson.D{{}})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var tasks []models.ToDoList
+	for cur.Next(context.Background()) {
+		var result bson.M
+		e := cur.Decode(&result)
+		if e != nil {
+			log.Fatal(e)
+		}
+
+		task := models.ToDoList{
+			ID:     result["_id"].(primitive.ObjectID),
+			Task:   result["task"].(string),
+			Status: result["status"].(bool),
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	if err := cur.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	cur.Close(context.Background())
 
 	resp := types.TasksData{
 		Success: true,
@@ -70,19 +96,33 @@ func GetAllTask(w http.ResponseWriter, r *http.Request) {
 
 // CreateTask create task route
 func CreateTask(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Context-Type", "application/x-www-form-urlencoded")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
 	var task models.ToDoList
 	_ = json.NewDecoder(r.Body).Decode(&task)
 
-	fmt.Println(task, r.Body)
+	insertResult, err := collection.InsertOne(context.Background(), task)
+	if err != nil {
+		log.Fatal(err)
+	}
+	insertedTaskID := insertResult.InsertedID.(primitive.ObjectID).Hex()
+	id, _ := primitive.ObjectIDFromHex(insertedTaskID)
 
-	insertOneTask(task)
+	var tToReturn models.ToDoList
+	err = collection.FindOne(context.TODO(), bson.M{"_id": id}).Decode(&tToReturn)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	json.NewEncoder(w).Encode(task)
+	resp := types.TaskData{
+		Success: true,
+		Task:    tToReturn,
+	}
+
+	bytes, err := json.Marshal(resp)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
+	common.WriteJsonResponse(w, bytes)
 }
 
 // TaskComplete update task route
@@ -132,49 +172,6 @@ func DeleteAllTask(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(count)
 	// json.NewEncoder(w).Encode("Task not found")
 
-}
-
-// get all task from the DB and return it
-func getAllTask() []models.ToDoList {
-	cur, err := collection.Find(context.Background(), bson.D{{}})
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var tasks []models.ToDoList
-	for cur.Next(context.Background()) {
-		var result bson.M
-		e := cur.Decode(&result)
-		if e != nil {
-			log.Fatal(e)
-		}
-
-		task := models.ToDoList{
-			ID:     result["_id"].(primitive.ObjectID),
-			Task:   result["task"].(string),
-			Status: result["status"].(bool),
-		}
-
-		tasks = append(tasks, task)
-	}
-
-	if err := cur.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	cur.Close(context.Background())
-	return tasks
-}
-
-// Insert one task in the DB
-func insertOneTask(task models.ToDoList) {
-	insertResult, err := collection.InsertOne(context.Background(), task)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Inserted a Single Record ", insertResult.InsertedID)
 }
 
 // task complete method, update task's status to true
